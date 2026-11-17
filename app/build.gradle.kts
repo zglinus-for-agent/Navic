@@ -57,8 +57,10 @@ android {
 		minSdk = libs.versions.android.minSdk.get().toInt()
 		targetSdk = libs.versions.android.targetSdk.get().toInt()
 		// 11000403: own heart button on the media session (app-drawn, like NetEase).
-		versionCode = 11000403
-		versionName = "11.0.4-fav2"
+		// 11000404: heart moved to the front of the custom buttons - the system keeps
+		// only ~5 actions, and appended last it was being dropped.
+		versionCode = 11000404
+		versionName = "11.0.4-fav3"
 		multiDexEnabled = true
 
 		ndk {

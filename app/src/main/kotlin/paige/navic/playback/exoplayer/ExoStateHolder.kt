@@ -353,6 +353,25 @@ class ExoStateHolder : KoinComponent {
 	}
 
 	private fun makeButtons(player: Player) = buildList {
+		// ORDER MATTERS. media3 appends custom buttons after the fixed
+		// previous / play-pause / next trio, and the system media notification only
+		// keeps about five actions in total - anything past that is dropped silently.
+		// Favourite therefore goes first among the custom buttons so it survives the
+		// truncation; whatever gets cut is repeat, not the heart.
+		add(
+			CommandButton.Builder(
+				if (favouriteStarred) {
+					CommandButton.ICON_HEART_FILLED
+				} else {
+					CommandButton.ICON_HEART_UNFILLED
+				}
+			)
+				.setDisplayName(if (favouriteStarred) "Unfavourite" else "Favourite")
+				.setSessionCommand(SessionCommand(COMMAND_FAVORITE, Bundle.EMPTY))
+				.setEnabled(favouriteMediaId != null)
+				.build()
+		)
+
 		add(
 			CommandButton.Builder(
 				if (player.shuffleModeEnabled) {
@@ -376,20 +395,6 @@ class ExoStateHolder : KoinComponent {
 			)
 				.setDisplayName("Repeat")
 				.setSessionCommand(SessionCommand(COMMAND_REPEAT, Bundle.EMPTY))
-				.build()
-		)
-
-		add(
-			CommandButton.Builder(
-				if (favouriteStarred) {
-					CommandButton.ICON_HEART_FILLED
-				} else {
-					CommandButton.ICON_HEART_UNFILLED
-				}
-			)
-				.setDisplayName(if (favouriteStarred) "Unfavourite" else "Favourite")
-				.setSessionCommand(SessionCommand(COMMAND_FAVORITE, Bundle.EMPTY))
-				.setEnabled(favouriteMediaId != null)
 				.build()
 		)
 	}
