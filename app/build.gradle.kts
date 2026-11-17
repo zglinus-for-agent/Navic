@@ -39,9 +39,10 @@ android {
 
 	defaultConfig {
 		// Fork-local change: spoofed install identity.
-		// Target is com.tencent.qqmusic 20.9.8.8 (versionCode 7608), read straight
-		// off the real APK from 应用宝 rather than guessed, so the identity matches
-		// what HarmonyOS would see from the genuine app.
+		// Back to 蜻蜓 FM 11.0.4 after the QQ Music A/B: the identity swap changed
+		// nothing about which buttons the card offers, so the package name is not
+		// the lever. Kept at fm.qingting.qtradio because that is the install
+		// already on the device and the one this fork has always used.
 		//
 		// This is a device-side test, not a claim that it bypasses anything:
 		// HarmonyOS may also check the signing certificate, in which case this
@@ -56,13 +57,12 @@ android {
 		// Side effect that cannot be avoided: it cannot coexist with the real
 		// com.tencent.qqmusic on the same device (signature mismatch), so the real
 		// app has to be uninstalled first if present.
-		applicationId = "com.tencent.qqmusic"
+		applicationId = "fm.qingting.qtradio"
 		minSdk = libs.versions.android.minSdk.get().toInt()
 		targetSdk = libs.versions.android.targetSdk.get().toInt()
-		// Identity copied from the real package: versionCode 7608, versionName
-		// 20.9.8.8 (aapt2 dump badging on com.tencent.qqmusic_20.9.8.8.apk).
-		versionCode = 7608
-		versionName = "20.9.8.8"
+		// 11000405: identity restored to 蜻蜓 FM, heart-button work from fav2/fav3 kept.
+		versionCode = 11000405
+		versionName = "11.0.4"
 		multiDexEnabled = true
 
 		ndk {
