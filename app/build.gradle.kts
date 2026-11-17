@@ -56,10 +56,9 @@ android {
 		applicationId = "fm.qingting.qtradio"
 		minSdk = libs.versions.android.minSdk.get().toInt()
 		targetSdk = libs.versions.android.targetSdk.get().toInt()
-		// Diagnostic build: bumped so the probe is distinguishable from the
-		// shipping 11000400 build when installed side by side in a log.
-		versionCode = 11000401
-		versionName = "11.0.4-probe1"
+		// 11000402: favourite wired to MediaSession rating (onSetRating -> star/unstar).
+		versionCode = 11000402
+		versionName = "11.0.4-fav1"
 		multiDexEnabled = true
 
 		ndk {

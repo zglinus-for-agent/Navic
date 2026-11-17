@@ -53,6 +53,10 @@ import androidx.media3.session.SessionToken
 import coil3.ImageLoader
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -61,6 +65,7 @@ import org.koin.core.component.inject
 import paige.navic.domain.manager.runtime.PreferenceManager
 import paige.navic.domain.manager.runtime.StorageManager
 import paige.navic.domain.manager.session.SessionManager
+import paige.navic.domain.repository.SongRepository
 import paige.navic.playback.exoplayer.impl.cache.NavicDataSource
 import paige.navic.playback.exoplayer.impl.listeners.ExoDiscordIntegrationImpl
 import paige.navic.playback.exoplayer.impl.playback.ExoAudioGainProcessor
@@ -76,7 +81,12 @@ class ExoStateHolder : KoinComponent {
 	private val sessionManager: SessionManager by inject()
 	private val imageLoader: ImageLoader by inject()
 	private val storageManager: StorageManager by inject()
+	private val songRepository: SongRepository by inject()
 	private val mutex = Mutex()
+
+	// Favourite commands arrive on the session's looper; star/unstar touches Room and
+	// the sync queue, so it goes off to IO rather than blocking that looper.
+	private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 	private var isInitialized = false
 
@@ -87,7 +97,7 @@ class ExoStateHolder : KoinComponent {
 	val gainProcessor = ExoAudioGainProcessor()
 
 
-	private class MediaSessionCallback(private val player: ExoPlayer) : MediaSession.Callback {
+	private inner class MediaSessionCallback(private val player: ExoPlayer) : MediaSession.Callback {
 		override fun onConnect(
 			session: MediaSession,
 			controller: MediaSession.ControllerInfo
@@ -174,25 +184,17 @@ class ExoStateHolder : KoinComponent {
 			return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
 		}
 
-		// PROBE (2026-11-17): media3 grants COMMAND_CODE_SESSION_SET_RATING by default
-		// (it is in SESSION_WRITE_COMMANDS) but Callback#onSetRating answers
-		// ERROR_NOT_SUPPORTED unless overridden. So a system UI that presses a
-		// heart/favourite button bound to rating gets a silent "no" today.
-		//
-		// These two overrides only log and report success - they do NOT star
-		// anything yet. The build is a diagnostic one: install it, press the
-		// favourite button on the HarmonyOS card, and see whether anything lands
-		// here at all.
+		// media3 grants COMMAND_CODE_SESSION_SET_RATING by default (it is in
+		// SessionCommand.SESSION_WRITE_COMMANDS) but Callback#onSetRating answers
+		// ERROR_NOT_SUPPORTED unless overridden, so a system UI whose favourite
+		// button is bound to rating used to get a silent "no". Now the rating is
+		// applied to the song: heart on -> star, heart off -> unstar.
 		override fun onSetRating(
 			session: MediaSession,
 			controller: MediaSession.ControllerInfo,
 			rating: Rating
 		): ListenableFuture<SessionResult> {
-			Log.i(
-				"NavicProbe",
-				"onSetRating(current) rating=$rating heart=${rating.isHeartRating} " +
-					"rated=${rating.isRated} pkg=${controller.packageName}"
-			)
+			applyFavorite(player.currentMediaItem?.mediaId, rating, controller)
 			return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
 		}
 
@@ -202,13 +204,39 @@ class ExoStateHolder : KoinComponent {
 			mediaId: String,
 			rating: Rating
 		): ListenableFuture<SessionResult> {
+			applyFavorite(mediaId, rating, controller)
+			return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+		}
+
+		private fun applyFavorite(
+			mediaId: String?,
+			rating: Rating,
+			controller: MediaSession.ControllerInfo
+		) {
+			val id = mediaId ?: run {
+				Log.w("NavicProbe", "onSetRating: no media item to rate")
+				return
+			}
+			// radio_* items are live streams with no row in the song table
+			if (id.startsWith("radio_")) {
+				Log.w("NavicProbe", "onSetRating: ignoring radio item $id")
+				return
+			}
+			val wantStarred = rating.isRated
 			Log.i(
 				"NavicProbe",
-				"onSetRating(mediaId=$mediaId) rating=$rating " +
-					"heart=${rating.isHeartRating} rated=${rating.isRated} " +
+				"onSetRating id=$id star=$wantStarred rating=$rating " +
 					"pkg=${controller.packageName}"
 			)
-			return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+			ioScope.launch {
+				try {
+					if (wantStarred) songRepository.starSong(id)
+					else songRepository.unstarSong(id)
+					Log.i("NavicProbe", "favourite applied: id=$id star=$wantStarred")
+				} catch (e: Exception) {
+					Log.e("NavicProbe", "favourite failed: id=$id star=$wantStarred", e)
+				}
+			}
 		}
 	}
 
