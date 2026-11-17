@@ -17,6 +17,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Rating
@@ -58,6 +59,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.koin.core.component.KoinComponent
@@ -87,6 +89,14 @@ class ExoStateHolder : KoinComponent {
 	// Favourite commands arrive on the session's looper; star/unstar touches Room and
 	// the sync queue, so it goes off to IO rather than blocking that looper.
 	private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+	// Cached so makeButtons() can pick the heart icon synchronously; refreshed from the
+	// DB on media item transitions and flipped optimistically when the button is hit.
+	@Volatile
+	private var favouriteStarred = false
+
+	@Volatile
+	private var favouriteMediaId: String? = null
 
 	private var isInitialized = false
 
@@ -120,6 +130,7 @@ class ExoStateHolder : KoinComponent {
 				.buildUpon()
 				.add(SessionCommand(COMMAND_SHUFFLE, Bundle.EMPTY))
 				.add(SessionCommand(COMMAND_REPEAT, Bundle.EMPTY))
+				.add(SessionCommand(COMMAND_FAVORITE, Bundle.EMPTY))
 				.apply {
 					if (isOwnApp) add(SessionCommand(COMMAND_SET_SHUFFLE_ORDER, Bundle.EMPTY))
 				}
@@ -166,6 +177,10 @@ class ExoStateHolder : KoinComponent {
 					}
 				}
 
+				COMMAND_FAVORITE -> {
+					toggleFavourite(session, player)
+				}
+
 				COMMAND_SET_SHUFFLE_ORDER -> {
 					val order = args.getIntArray(KEY_SHUFFLE_ORDER)
 					if (order != null && order.size == player.mediaItemCount) {
@@ -208,12 +223,39 @@ class ExoStateHolder : KoinComponent {
 			return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
 		}
 
+		// Our own heart button, the same shape NetEase Cloud Music uses: the app draws
+		// the control and handles the click itself, it does not wait for the system to
+		// provide one.
+		private fun toggleFavourite(session: MediaSession, player: Player) {
+			val id = favouriteMediaId ?: player.currentMediaItem?.mediaId
+			if (id == null || id.startsWith("radio_")) {
+				Log.w("NavicProbe", "toggleFavourite: nothing to favourite (id=$id)")
+				return
+			}
+			val target = !favouriteStarred
+			favouriteStarred = target
+			session.setCustomLayout(makeButtons(player))
+			Log.i("NavicProbe", "toggleFavourite id=$id -> star=$target")
+			ioScope.launch {
+				try {
+					if (target) songRepository.starSong(id) else songRepository.unstarSong(id)
+					Log.i("NavicProbe", "favourite written: id=$id star=$target")
+				} catch (e: Exception) {
+					Log.e("NavicProbe", "favourite write failed: id=$id star=$target", e)
+					// put the icon back where the data actually is
+					withContext(Dispatchers.Main) {
+						favouriteStarred = !target
+						session.setCustomLayout(makeButtons(player))
+					}
+				}
+			}
+		}
+
 		private fun applyFavorite(
 			mediaId: String?,
 			rating: Rating,
 			controller: MediaSession.ControllerInfo
-		) {
-			val id = mediaId ?: run {
+		) {			val id = mediaId ?: run {
 				Log.w("NavicProbe", "onSetRating: no media item to rate")
 				return
 			}
@@ -336,6 +378,20 @@ class ExoStateHolder : KoinComponent {
 				.setSessionCommand(SessionCommand(COMMAND_REPEAT, Bundle.EMPTY))
 				.build()
 		)
+
+		add(
+			CommandButton.Builder(
+				if (favouriteStarred) {
+					CommandButton.ICON_HEART_FILLED
+				} else {
+					CommandButton.ICON_HEART_UNFILLED
+				}
+			)
+				.setDisplayName(if (favouriteStarred) "Unfavourite" else "Favourite")
+				.setSessionCommand(SessionCommand(COMMAND_FAVORITE, Bundle.EMPTY))
+				.setEnabled(favouriteMediaId != null)
+				.build()
+		)
 	}
 
 	private val loadControl: LoadControl = DefaultLoadControl.Builder().apply {
@@ -396,6 +452,31 @@ class ExoStateHolder : KoinComponent {
 
 					override fun onRepeatModeChanged(repeatMode: Int) {
 						mediaSession.setCustomLayout(makeButtons(player))
+					}
+
+					override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+						// this fires as soon as items are set, which can be before the
+						// session exists - hence the guard
+						if (!this@ExoStateHolder::mediaSession.isInitialized) return
+						val id = mediaItem?.mediaId
+						favouriteMediaId = id
+						favouriteStarred = false
+						mediaSession.setCustomLayout(makeButtons(player))
+						if (id == null || id.startsWith("radio_")) return
+						// the heart must reflect the DB, not the last click
+						ioScope.launch {
+							val starred = try {
+								songRepository.isSongStarred(id)
+							} catch (e: Exception) {
+								false
+							}
+							withContext(Dispatchers.Main) {
+								if (favouriteMediaId == id) {
+									favouriteStarred = starred
+									mediaSession.setCustomLayout(makeButtons(player))
+								}
+							}
+						}
 					}
 				})
 
@@ -479,6 +560,7 @@ class ExoStateHolder : KoinComponent {
 	companion object {
 		const val COMMAND_SHUFFLE = "COMMAND_SHUFFLE"
 		const val COMMAND_REPEAT = "COMMAND_REPEAT"
+		const val COMMAND_FAVORITE = "COMMAND_FAVORITE"
 		const val COMMAND_SET_SHUFFLE_ORDER = "COMMAND_SET_SHUFFLE_ORDER"
 		const val KEY_SHUFFLE_ORDER = "KEY_SHUFFLE_ORDER"
 

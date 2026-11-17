@@ -56,9 +56,9 @@ android {
 		applicationId = "fm.qingting.qtradio"
 		minSdk = libs.versions.android.minSdk.get().toInt()
 		targetSdk = libs.versions.android.targetSdk.get().toInt()
-		// 11000402: favourite wired to MediaSession rating (onSetRating -> star/unstar).
-		versionCode = 11000402
-		versionName = "11.0.4-fav1"
+		// 11000403: own heart button on the media session (app-drawn, like NetEase).
+		versionCode = 11000403
+		versionName = "11.0.4-fav2"
 		multiDexEnabled = true
 
 		ndk {
