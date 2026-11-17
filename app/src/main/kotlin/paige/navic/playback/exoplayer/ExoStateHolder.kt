@@ -12,12 +12,14 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.Process
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.Rating
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.AudioProcessorChain
@@ -94,6 +96,16 @@ class ExoStateHolder : KoinComponent {
 			// external controllers desync the app queue from the player timeline
 			val isOwnApp = controller.uid == Process.myUid()
 
+			// PROBE (2026-11-17): who is actually talking to this session. If nothing
+			// external ever connects here, the HarmonyOS media card is not going
+			// through MediaSession at all and this whole route is a dead end.
+			Log.i(
+				"NavicProbe",
+				"onConnect pkg=${controller.packageName} uid=${controller.uid} " +
+					"own=$isOwnApp trusted=${controller.isTrusted} " +
+					"hints=${controller.connectionHints}"
+			)
+
 			val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
 				.buildUpon()
 				.add(SessionCommand(COMMAND_SHUFFLE, Bundle.EMPTY))
@@ -125,6 +137,12 @@ class ExoStateHolder : KoinComponent {
 			customCommand: SessionCommand,
 			args: Bundle
 		): ListenableFuture<SessionResult> {
+			// PROBE: log every custom command verbatim, including unknown ones.
+			Log.i(
+				"NavicProbe",
+				"onCustomCommand action=${customCommand.customAction} " +
+					"pkg=${controller.packageName} args=$args"
+			)
 			when (customCommand.customAction) {
 				COMMAND_SHUFFLE -> {
 					player.shuffleModeEnabled = !player.shuffleModeEnabled
@@ -146,8 +164,50 @@ class ExoStateHolder : KoinComponent {
 						)
 					}
 				}
+
+				else -> Log.w(
+					"NavicProbe",
+					"UNKNOWN custom action: ${customCommand.customAction}"
+				)
 			}
 
+			return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+		}
+
+		// PROBE (2026-11-17): media3 grants COMMAND_CODE_SESSION_SET_RATING by default
+		// (it is in SESSION_WRITE_COMMANDS) but Callback#onSetRating answers
+		// ERROR_NOT_SUPPORTED unless overridden. So a system UI that presses a
+		// heart/favourite button bound to rating gets a silent "no" today.
+		//
+		// These two overrides only log and report success - they do NOT star
+		// anything yet. The build is a diagnostic one: install it, press the
+		// favourite button on the HarmonyOS card, and see whether anything lands
+		// here at all.
+		override fun onSetRating(
+			session: MediaSession,
+			controller: MediaSession.ControllerInfo,
+			rating: Rating
+		): ListenableFuture<SessionResult> {
+			Log.i(
+				"NavicProbe",
+				"onSetRating(current) rating=$rating heart=${rating.isHeartRating} " +
+					"rated=${rating.isRated} pkg=${controller.packageName}"
+			)
+			return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+		}
+
+		override fun onSetRating(
+			session: MediaSession,
+			controller: MediaSession.ControllerInfo,
+			mediaId: String,
+			rating: Rating
+		): ListenableFuture<SessionResult> {
+			Log.i(
+				"NavicProbe",
+				"onSetRating(mediaId=$mediaId) rating=$rating " +
+					"heart=${rating.isHeartRating} rated=${rating.isRated} " +
+					"pkg=${controller.packageName}"
+			)
 			return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
 		}
 	}
