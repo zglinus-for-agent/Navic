@@ -27,6 +27,11 @@ on:
   workflow_dispatch:
   push:
     branches: [master]
+    # Docs never change the APK, and a rebuild costs a full FFmpeg compile.
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.forgejo/**'
 
 concurrency:
   group: build-arm64-${{ github.ref }}
