@@ -1,25 +1,29 @@
-# Fork-local CI for paige/Navic -> com.zglinus.navic
+# Fork-local CI for paige/Navic -> fm.qingting.qtradio
 #
 # Why this exists: the local box (4 cores / 9 GB, no JDK 21, no gradle 9.8.2)
 # cannot build this project, and every Maven/Gradle host is unreachable from it
 # without a proxy. GitHub's runner has JDK 21 and a working network.
 #
-# Fork-local changes this workflow depends on (see the two commits on master):
-#   * app/build.gradle.kts  -> applicationId com.zglinus.navic, versionCode 6101,
-#                              abiFilters reduced to arm64-v8a only
+# Fork-local changes this workflow depends on (see the commits on master):
+#   * app/build.gradle.kts  -> applicationId fm.qingting.qtradio, versionCode
+#                              11000400, abiFilters reduced to arm64-v8a only
 #   * gradle.properties     -> heaps lowered to 4g / 2g for the 16 GB runner
 #
 # Release, not debug, on purpose: an APK signed with the runner's throwaway
 # debug keystore gets a different signature on every run, so each rebuild would
 # have to be uninstalled first - losing all app data (server config, caches).
-# signing/navic-release.jks is a fixed key committed to this repo, so rebuilds
-# upgrade in place. The repo is public, so that key is public too; it is a
-# throwaway self-signed key and proves nothing about authenticity.
+# The keystore is reconstructed from Actions secrets, so rebuilds upgrade in place.
 #
-# fdroid flavour, not default: BuildConfig.FDROID gates off the upstream
-# update checker (which compares digit-runs in the release tag against the
-# local versionName and would nag on every launch, because our versionName
-# carries a -zglinus.1 suffix) and the Discord RPC integration.
+# fdroid flavour, not default: BuildConfig.FDROID gates off the upstream update
+# checker (which compares digit-runs in the release tag against the local
+# versionName and would nag on every launch, because our versionName is a spoof)
+# and the Discord RPC integration.
+#
+# Note on android-actions/setup-android: it was removed deliberately. Its
+# `sdkmanager --licenses` call exits 1 in this environment ("7 of 8 SDK package
+# licenses not accepted" then a y/N prompt with no stdin), which failed the job
+# before Gradle ever ran. Licences are accepted non-interactively below instead,
+# and AGP provisions platform/build-tools/NDK itself once they are accepted.
 
 name: build-arm64
 
@@ -55,14 +59,30 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licences
+        run: |
+          set -uo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "SDK=$SDK"
+          SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SM" ] || SM="$(command -v sdkmanager || true)"
+          if [ -z "$SM" ] || [ ! -x "$SM" ]; then
+            echo "no sdkmanager found; looked under $SDK/cmdline-tools/*/bin and \$PATH"
+            ls -d "$SDK"/cmdline-tools/*/bin 2>/dev/null || true
+            exit 1
+          fi
+          echo "sdkmanager=$SM"
+          # sdkmanager exits 1 when licences are merely *offered*, so the exit code
+          # is not meaningful here - only whether they are accepted afterwards.
+          yes | "$SM" --licenses > /tmp/licences.log 2>&1 || true
+          grep -c "Accept" /tmp/licences.log 2>/dev/null || true
+          "$SM" --list_installed 2>/dev/null | sed -n '1,40p' || true
 
       - name: Show environment
         run: |
           java -version
           echo "cores=$(nproc) mem=$(free -g | awk '/Mem:/{print $2}')G disk=$(df -h / | tail -1 | awk '{print $4}')"
-          sdkmanager --list_installed 2>/dev/null | head -30 || true
+          git submodule status | head -5
 
       - name: Gradle caches
         uses: actions/cache@v4
@@ -73,30 +93,34 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      # Signing material lives in signing/keystore.properties inside this private
-      # repo (see the note in that file for why). Exported here as the env vars
-      # app/build.gradle.kts reads.
+      # Signing material is not in the repo; it is reconstructed from secrets.
       - name: Assemble arm64 release APK
+        env:
+          SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          set -a
-          . signing/keystore.properties
-          set +a
-          export SIGNING_STORE_FILE="$PWD/signing/navic-release.jks"
-          export SIGNING_STORE_PASSWORD="$storePassword"
-          export SIGNING_KEY_ALIAS="$keyAlias"
-          export SIGNING_KEY_PASSWORD="$keyPassword"
+          set -euo pipefail
+          if [ -n "${SIGNING_KEYSTORE_B64:-}" ]; then
+            mkdir -p "$RUNNER_TEMP/signing"
+            printf '%s' "$SIGNING_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/signing/navic-release.jks"
+            export SIGNING_STORE_FILE="$RUNNER_TEMP/signing/navic-release.jks"
+            export SIGNING_KEY_ALIAS="navic"
+            echo "signing: keystore restored from secret"
+          else
+            echo "signing: SIGNING_KEYSTORE_B64 not set - release APK will be UNSIGNED"
+          fi
           ./gradlew :app:assembleFdroidRelease --no-daemon --stacktrace
 
       - name: Verify what actually got built
         if: always()
         run: |
-          set -x
           find app/build/outputs/apk -name '*.apk' -exec ls -lh {} \; || true
           AAPT=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | tail -1)
-          for f in $(find app/build/outputs/apk -name '*.apk'); do
+          for f in $(find app/build/outputs/apk -name '*.apk' 2>/dev/null); do
             echo "=== $f ==="
             "$AAPT" dump badging "$f" 2>/dev/null | grep -E "^package:|^application-label:|^native-code:|^sdkVersion:" || true
-            unzip -l "$f" | grep -E "lib/" || true
+            unzip -l "$f" 2>/dev/null | grep -E "lib/" || true
           done
 
       - name: Collect APK
