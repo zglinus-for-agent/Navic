@@ -39,10 +39,13 @@ android {
 
 	defaultConfig {
 		// Fork-local change: spoofed install identity.
-		// Target is fm.qingting.qtradio / 11.0.4 (11000400) so HarmonyOS's media
-		// centre picks the app up as that known media app. This is a device-side
-		// test, not a claim that it bypasses anything: HarmonyOS may also check
-		// the signing certificate, in which case this does nothing.
+		// Target is com.tencent.qqmusic 20.9.8.8 (versionCode 7608), read straight
+		// off the real APK from 应用宝 rather than guessed, so the identity matches
+		// what HarmonyOS would see from the genuine app.
+		//
+		// This is a device-side test, not a claim that it bypasses anything:
+		// HarmonyOS may also check the signing certificate, in which case this
+		// does nothing at all.
 		//
 		// Everything in AndroidManifest that must be unique is written as
 		// ${applicationId} (playback permission, fileprovider authority, launcher
@@ -51,16 +54,15 @@ android {
 		// source package renames needed.
 		//
 		// Side effect that cannot be avoided: it cannot coexist with the real
-		// fm.qingting.qtradio on the same device (signature mismatch), so the
-		// real app has to be uninstalled first if present.
-		applicationId = "fm.qingting.qtradio"
+		// com.tencent.qqmusic on the same device (signature mismatch), so the real
+		// app has to be uninstalled first if present.
+		applicationId = "com.tencent.qqmusic"
 		minSdk = libs.versions.android.minSdk.get().toInt()
 		targetSdk = libs.versions.android.targetSdk.get().toInt()
-		// 11000403: own heart button on the media session (app-drawn, like NetEase).
-		// 11000404: heart moved to the front of the custom buttons - the system keeps
-		// only ~5 actions, and appended last it was being dropped.
-		versionCode = 11000404
-		versionName = "11.0.4-fav3"
+		// Identity copied from the real package: versionCode 7608, versionName
+		// 20.9.8.8 (aapt2 dump badging on com.tencent.qqmusic_20.9.8.8.apk).
+		versionCode = 7608
+		versionName = "20.9.8.8"
 		multiDexEnabled = true
 
 		ndk {
