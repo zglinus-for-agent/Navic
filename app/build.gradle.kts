@@ -38,18 +38,34 @@ android {
 	}
 
 	defaultConfig {
-		applicationId = "paige.navic"
+		// Fork-local change: spoofed install identity.
+		// Target is fm.qingting.qtradio / 11.0.4 (11000400) so HarmonyOS's media
+		// centre picks the app up as that known media app. This is a device-side
+		// test, not a claim that it bypasses anything: HarmonyOS may also check
+		// the signing certificate, in which case this does nothing.
+		//
+		// Everything in AndroidManifest that must be unique is written as
+		// ${applicationId} (playback permission, fileprovider authority, launcher
+		// aliases, the NOW_PLAYING_UPDATED broadcast) and the Kotlin code reads
+		// context.packageName at runtime, so this line is the whole rename - no
+		// source package renames needed.
+		//
+		// Side effect that cannot be avoided: it cannot coexist with the real
+		// fm.qingting.qtradio on the same device (signature mismatch), so the
+		// real app has to be uninstalled first if present.
+		applicationId = "fm.qingting.qtradio"
 		minSdk = libs.versions.android.minSdk.get().toInt()
 		targetSdk = libs.versions.android.targetSdk.get().toInt()
-		versionCode = 61
-		versionName = "v1.0.0-beta02"
+		versionCode = 11000400
+		versionName = "11.0.4"
 		multiDexEnabled = true
 
 		ndk {
-			abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a"))
-			if (!isTaskRelease) {
-				abiFilters.addAll(listOf("x86_64", "x86"))
-			}
+			// Fork-local change: arm64-v8a only.
+			// Upstream builds arm64-v8a + armeabi-v7a (plus x86_64/x86 on debug).
+			// Each extra ABI pays a full FFmpeg cross-compile, so trimming to one
+			// is what makes the CI build finish in a reasonable time.
+			abiFilters.addAll(listOf("arm64-v8a"))
 		}
 	}
 
