@@ -1,0 +1,110 @@
+# Fork-local CI for paige/Navic -> com.zglinus.navic
+#
+# Why this exists: the local box (4 cores / 9 GB, no JDK 21, no gradle 9.8.2)
+# cannot build this project, and every Maven/Gradle host is unreachable from it
+# without a proxy. GitHub's runner has JDK 21 and a working network.
+#
+# Fork-local changes this workflow depends on (see the two commits on master):
+#   * app/build.gradle.kts  -> applicationId com.zglinus.navic, versionCode 6101,
+#                              abiFilters reduced to arm64-v8a only
+#   * gradle.properties     -> heaps lowered to 4g / 2g for the 16 GB runner
+#
+# Release, not debug, on purpose: an APK signed with the runner's throwaway
+# debug keystore gets a different signature on every run, so each rebuild would
+# have to be uninstalled first - losing all app data (server config, caches).
+# signing/navic-release.jks is a fixed key committed to this repo, so rebuilds
+# upgrade in place. The repo is public, so that key is public too; it is a
+# throwaway self-signed key and proves nothing about authenticity.
+#
+# fdroid flavour, not default: BuildConfig.FDROID gates off the upstream
+# update checker (which compares digit-runs in the release tag against the
+# local versionName and would nag on every launch, because our versionName
+# carries a -zglinus.1 suffix) and the Discord RPC integration.
+
+name: build-arm64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+
+concurrency:
+  group: build-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: arm64 release APK (fdroid)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout (submodules are build inputs, not optional)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: JDK 21 (project pins jvmToolchain(21))
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Show environment
+        run: |
+          java -version
+          echo "cores=$(nproc) mem=$(free -g | awk '/Mem:/{print $2}')G disk=$(df -h / | tail -1 | awk '{print $4}')"
+          sdkmanager --list_installed 2>/dev/null | head -30 || true
+
+      - name: Gradle caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # Signing material lives in signing/keystore.properties inside this private
+      # repo (see the note in that file for why). Exported here as the env vars
+      # app/build.gradle.kts reads.
+      - name: Assemble arm64 release APK
+        run: |
+          set -a
+          . signing/keystore.properties
+          set +a
+          export SIGNING_STORE_FILE="$PWD/signing/navic-release.jks"
+          export SIGNING_STORE_PASSWORD="$storePassword"
+          export SIGNING_KEY_ALIAS="$keyAlias"
+          export SIGNING_KEY_PASSWORD="$keyPassword"
+          ./gradlew :app:assembleFdroidRelease --no-daemon --stacktrace
+
+      - name: Verify what actually got built
+        if: always()
+        run: |
+          set -x
+          find app/build/outputs/apk -name '*.apk' -exec ls -lh {} \; || true
+          AAPT=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | tail -1)
+          for f in $(find app/build/outputs/apk -name '*.apk'); do
+            echo "=== $f ==="
+            "$AAPT" dump badging "$f" 2>/dev/null | grep -E "^package:|^application-label:|^native-code:|^sdkVersion:" || true
+            unzip -l "$f" | grep -E "lib/" || true
+          done
+
+      - name: Collect APK
+        if: always()
+        run: |
+          mkdir -p out
+          find app/build/outputs/apk -name '*.apk' -exec cp {} out/ \; || true
+          ls -lh out/ || true
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: navic-arm64-release
+          path: out/*.apk
+          if-no-files-found: error
+          compression-level: 0

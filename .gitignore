@@ -12,3 +12,8 @@
 /local.properties
 
 .DS_Store
+
+# fork-local signing material - never commit; lives in Actions secrets
+signing/*.jks
+signing/keystore.properties
+*.keystore
