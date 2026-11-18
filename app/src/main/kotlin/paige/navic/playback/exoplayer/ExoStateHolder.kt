@@ -368,7 +368,12 @@ class ExoStateHolder : KoinComponent {
 			)
 				.setDisplayName(if (favouriteStarred) "Unfavourite" else "Favourite")
 				.setSessionCommand(SessionCommand(COMMAND_FAVORITE, Bundle.EMPTY))
-				.setEnabled(favouriteMediaId != null)
+				// Derived from the live player on every rebuild. It used to depend on
+				// favouriteMediaId, which onMediaItemTransition failed to set when it
+				// ran before the session existed - leaving the heart grey and dead.
+				.setEnabled(
+					player.currentMediaItem?.let { !it.mediaId.startsWith("radio_") } == true
+				)
 				.build()
 		)
 
@@ -460,13 +465,16 @@ class ExoStateHolder : KoinComponent {
 					}
 
 					override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-						// this fires as soon as items are set, which can be before the
-						// session exists - hence the guard
-						if (!this@ExoStateHolder::mediaSession.isInitialized) return
+						// This fires as soon as items are set, which can be before the
+						// session exists. The guard used to return from the whole method,
+						// so favouriteMediaId was never written and the heart stayed
+						// disabled. Only the session call needs guarding.
 						val id = mediaItem?.mediaId
 						favouriteMediaId = id
 						favouriteStarred = false
-						mediaSession.setCustomLayout(makeButtons(player))
+						if (this@ExoStateHolder::mediaSession.isInitialized) {
+							mediaSession.setCustomLayout(makeButtons(player))
+						}
 						if (id == null || id.startsWith("radio_")) return
 						// the heart must reflect the DB, not the last click
 						ioScope.launch {
@@ -478,7 +486,9 @@ class ExoStateHolder : KoinComponent {
 							withContext(Dispatchers.Main) {
 								if (favouriteMediaId == id) {
 									favouriteStarred = starred
-									mediaSession.setCustomLayout(makeButtons(player))
+									if (this@ExoStateHolder::mediaSession.isInitialized) {
+										mediaSession.setCustomLayout(makeButtons(player))
+									}
 								}
 							}
 						}

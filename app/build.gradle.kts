@@ -60,8 +60,9 @@ android {
 		applicationId = "fm.qingting.qtradio"
 		minSdk = libs.versions.android.minSdk.get().toInt()
 		targetSdk = libs.versions.android.targetSdk.get().toInt()
-		// 11000405: identity restored to 蜻蜓 FM, heart-button work from fav2/fav3 kept.
-		versionCode = 11000405
+		// 11000406: heart was grey because its enabled state keyed off a field that a
+		// mis-scoped guard never wrote; enabled state now comes from the live player.
+		versionCode = 11000406
 		versionName = "11.0.4"
 		multiDexEnabled = true
 
